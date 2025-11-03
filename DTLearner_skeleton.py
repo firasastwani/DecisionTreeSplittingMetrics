@@ -83,10 +83,10 @@ class DTLearner:
         # Hint: Use np.isnan() to check for NaN
 
         corr_matrix = np.corrcoef(dataX[:, feature_idx], dataY)
-        correlation = abs(corr_matrix[0,1])
+        correlation = abs(corr_matrix[0, 1])
 
         if np.isnan(correlation):
-            return 0        
+            return 0.0
 
         return correlation
 
@@ -129,8 +129,69 @@ class DTLearner:
         # Hint: For continuous Y, bin into quartiles using np.percentile
         # Hint: For discrete Y (few unique values), use categories directly
 
-        gain = 0.0  # Placeholder
-        return gain
+        def calculate_gini(y_values):
+            if len(y_values) == 0:
+                return 0.0
+            
+            # Bin y values in quartiles for continuous data
+            bins = np.percentile(y_values, [0, 25, 50, 75, 100])
+            y_binned = np.digitize(y_values, bins[1:-1])
+
+            unique, counts = np.unique(y_binned, return_counts=True)
+            
+            proportions = counts / len(y_values)
+
+            gini = 1.0 - np.sum(proportions ** 2)
+
+            return gini
+
+        # Calculate Gini before split
+        gini_before = calculate_gini(dataY)
+
+        # Get unique sorted feature values
+        unique_vals = np.sort(np.unique(dataX[:, feature_idx]))
+
+        # If only one unique value, can't split
+        if len(unique_vals) < 2:
+            return 0.0
+
+        # Calculate adjacent averages as thresholds
+        thresholds = [(unique_vals[i] + unique_vals[i+1]) / 2
+                     for i in range(len(unique_vals) - 1)]
+        
+        best_gain = 0.0
+
+        # Try each threshold
+        for threshold in thresholds:
+            # Split data
+            left_mask = dataX[:, feature_idx] <= threshold
+            right_mask = ~left_mask
+
+            y_left = dataY[left_mask]
+            y_right = dataY[right_mask]
+
+            # Skip if split creates empty group
+            if len(y_left) == 0 or len(y_right) == 0:
+                continue
+
+            # Calculate Gini for each group
+            gini_left = calculate_gini(y_left)
+            gini_right = calculate_gini(y_right)
+
+            # Calculate weighted Gini
+            n_total = len(dataY)
+            weighted_gini = (len(y_left) / n_total) * gini_left + \
+                           (len(y_right) / n_total) * gini_right
+            
+            # Calculate gain
+            gain = gini_before - weighted_gini
+            
+            # Keep track of best gain
+            if gain > best_gain:
+                best_gain = gain
+        
+        return best_gain
+
 
     # ========================================================================
     # VARIANCE REDUCTION (Standard CART)
@@ -158,7 +219,26 @@ class DTLearner:
         # Hint: Calculate weighted variance after split
         # Hint: reduction = current_variance - weighted_variance
 
-        reduction = 0.0  # Placeholder
+        current_var = np.var(dataY)
+
+        split_val = np.median(dataX[:, feature_idx])
+
+        left_split = dataX[:, feature_idx] <= split_val
+        right_split = ~left_split
+
+        y_left = dataY[left_split]
+        y_right = dataY[right_split]
+
+        var_left = np.var(y_left)
+        var_right = np.var(y_right)
+
+        n_total = len(dataY)
+
+        weighted_var = (len(y_left) / n_total) * var_left + \
+                        (len(y_right) / n_total) * var_right 
+
+        reduction = current_var - weighted_var
+
         return reduction
 
     # ========================================================================
@@ -187,7 +267,27 @@ class DTLearner:
         # Hint: Calculate MAE for left and right groups using their medians
         # Hint: reduction = current_mae - weighted_mae
 
-        reduction = 0.0  # Placeholder
+        current_mae = np.mean(np.abs(dataY - np.median(dataY)))
+        split_val = np.median(dataX[:, feature_idx])
+
+        left_split = dataX[:, feature_idx] <= split_val
+        right_split = ~left_split
+
+        y_left = dataY[left_split]
+        y_right = dataY[right_split]
+
+        mae_left = np.mean(np.abs(y_left - np.median(y_left)))
+        mae_right = np.mean(np.abs(y_right - np.median(y_right)))
+
+
+        n_total = len(dataY)
+
+        weighted_mae = (len(y_left) / n_total) * mae_left + \
+                        (len(y_right) / n_total) * mae_right
+
+
+        reduction = current_mae - weighted_mae
+
         return reduction
 
     # ========================================================================
@@ -217,6 +317,7 @@ class DTLearner:
         # Hint: current_mse = np.mean((dataY - np.mean(dataY))**2)
         # Hint: Split at median of feature
         # Hint: Calculate weighted MSE after split
+
 
         reduction = 0.0  # Placeholder
         return reduction
@@ -314,10 +415,7 @@ class DTLearner:
             for i, score in enumerate(scores):
                 print(f"  Feature {i}: score = {score:.4f}")
 
-        # TODO: Find the maximum score
-        if self.verbose:
-            print("  TODO: Find maximum score")
-        max_score = 0.0  # Placeholder - replace with np.max(scores)
+        max_score = np.max(scores) 
 
         # TODO: Find all features with maximum score (handle ties with tolerance)
         if self.verbose:
@@ -326,7 +424,9 @@ class DTLearner:
         # Hint: You need to return INDICES, not booleans. Use np.where() to get indices.
         #   1) Hint: Use np.where() to find indices of tied features
         #   2) Hint: Use np.array() to convert list to numpy array
-        tied_features = np.array([0])  # Placeholder - replace with proper tie detection
+
+        tied_indices = np.where(np.abs(scores - max_score) < self.tie_tolerance)[0]
+        tied_features = np.array(tied_indices)
 
         if self.verbose and len(tied_features) > 1:
             print(f"  Tie detected! Features {tied_features} all have score {max_score:.4f}")
@@ -336,16 +436,14 @@ class DTLearner:
             print(f"  TODO: Apply tie-breaking strategy '{self.tie_breaker}'")
 
         if self.tie_breaker == 'first':
-            best_feature = 0  # Placeholder - select tied_features[0]
+            best_feature = tied_features[0]
         elif self.tie_breaker == 'last':
-            best_feature = 0  # Placeholder - select tied_features[-1]
+            best_feature = tied_features[-1]
         elif self.tie_breaker == 'random':
-            best_feature = 0  # Placeholder - use np.random.choice(tied_features)
+            best_feature = np.random.choice(tied_features)
 
-        # TODO: Calculate split value as median of best feature
-        if self.verbose:
-            print("  TODO: Calculate split value as median")
-        split_val = 0.0  # Placeholder - replace with np.median(dataX[:, best_feature])
+      
+        split_val = np.median(dataX[:, best_feature])
 
         if self.verbose:
             print(f"  --> Selected feature {best_feature} (tie_breaker={self.tie_breaker})")
