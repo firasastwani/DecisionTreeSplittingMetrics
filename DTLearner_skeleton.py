@@ -318,8 +318,35 @@ class DTLearner:
         # Hint: Split at median of feature
         # Hint: Calculate weighted MSE after split
 
+        # Calculate MSE before split
+        current_mse = np.mean((dataY - np.mean(dataY))**2)
+        
+        # Find split point (median of this feature)
+        split_val = np.median(dataX[:, feature_idx])
 
-        reduction = 0.0  # Placeholder
+        # Split data into left and right groups
+        left_split = dataX[:, feature_idx] <= split_val
+        right_split = ~left_split
+
+        y_left = dataY[left_split]
+        y_right = dataY[right_split]
+
+        # Handle edge case: if split creates empty group, no reduction
+        if len(y_left) == 0 or len(y_right) == 0:
+            return 0.0
+
+        # Calculate MSE for each group
+        mse_left = np.mean((y_left - np.mean(y_left)) ** 2)
+        mse_right = np.mean((y_right - np.mean(y_right)) ** 2)
+
+        # Calculate weighted MSE after split
+        n_total = len(dataY)
+        weighted_mse = (len(y_left) / n_total) * mse_left + \
+                       (len(y_right) / n_total) * mse_right
+
+        # Calculate reduction (gain)
+        reduction = current_mse - weighted_mse
+
         return reduction
 
     # ========================================================================
@@ -339,16 +366,54 @@ class DTLearner:
             gain: Information gain (higher is better)
         """
         if self.verbose:
-            print(f"    TODO: Calculate information gain for feature {feature_idx}")
-            print("    Hint: Discretize Y into bins, calculate entropy")
+            print(f"    Calculating information gain for feature {feature_idx}")
 
-        # TODO: Implement information gain
-        # Hint: For regression, discretize Y into bins
-        # Hint: Calculate entropy: -Σ(p * log2(p)) for each bin
-        # Hint: Split at median of feature
-        # Hint: gain = entropy_before - weighted_entropy_after
-
-        gain = 0.0  # Placeholder
+        def calculate_entropy(y_values):
+            """Calculate entropy using quartile binning"""
+            if len(y_values) == 0:
+                return 0.0
+            
+            # Bin Y values into quartiles for continuous data
+            bins = np.percentile(y_values, [0, 25, 50, 75, 100])
+            y_binned = np.digitize(y_values, bins[1:-1])
+            
+            # Calculate proportions for each bin
+            unique, counts = np.unique(y_binned, return_counts=True)
+            proportions = counts / len(y_values)
+            
+            # Calculate entropy: -Σ(p * log2(p)) where p > 0
+            entropy = -np.sum([p * np.log2(p) for p in proportions if p > 0])
+            return entropy
+        
+        # Calculate entropy before split
+        entropy_before = calculate_entropy(dataY)
+        
+        # Find split point (median of this feature)
+        split_val = np.median(dataX[:, feature_idx])
+        
+        # Split data into left and right groups
+        left_split = dataX[:, feature_idx] <= split_val
+        right_split = ~left_split
+        
+        y_left = dataY[left_split]
+        y_right = dataY[right_split]
+        
+        # Handle edge case: if split creates empty group, no gain
+        if len(y_left) == 0 or len(y_right) == 0:
+            return 0.0
+        
+        # Calculate entropy for each group
+        entropy_left = calculate_entropy(y_left)
+        entropy_right = calculate_entropy(y_right)
+        
+        # Calculate weighted entropy after split
+        n_total = len(dataY)
+        weighted_entropy = (len(y_left) / n_total) * entropy_left + \
+                          (len(y_right) / n_total) * entropy_right
+        
+        # Calculate gain
+        gain = entropy_before - weighted_entropy
+        
         return gain
 
     # ========================================================================
@@ -470,53 +535,45 @@ class DTLearner:
         """
         if self.verbose:
             print(f"\n{'  ' * depth}Building tree at depth {depth}, samples={dataX.shape[0]}")
-            print(f"{'  ' * depth}TODO: Check base cases (max_depth, leaf_size, all same Y)")
 
-        # TODO: Base case 1 - Check if we've reached max depth
-        if self.verbose and self.max_depth is not None and depth >= self.max_depth:
-            print(f"{'  ' * depth}TODO: Max depth reached, should create leaf")
-        # Hint: if self.max_depth is not None and depth >= self.max_depth:
-        #           return np.mean(dataY)
+        # Base case 1 - Check if we've reached max depth
+        if self.max_depth is not None and depth >= self.max_depth:
+            if self.verbose:
+                print(f"{'  ' * depth}Max depth reached, creating leaf")
+            return np.mean(dataY)
 
-        # TODO: Base case 2 - Check if we have too few samples
-        if self.verbose and dataX.shape[0] <= self.leaf_size:
-            print(f"{'  ' * depth}TODO: Too few samples ({dataX.shape[0]} <= {self.leaf_size}), should create leaf")
-        # Hint: if dataX.shape[0] <= self.leaf_size:
-        #           return np.mean(dataY)
+        # Base case 2 - Check if we have too few samples
+        if dataX.shape[0] <= self.leaf_size:
+            if self.verbose:
+                print(f"{'  ' * depth}Too few samples ({dataX.shape[0]} <= {self.leaf_size}), creating leaf")
+            return np.mean(dataY)
 
-        # TODO: Base case 3 - Check if all Y values are the same
-        if self.verbose and len(np.unique(dataY)) == 1:
-            print(f"{'  ' * depth}TODO: All Y values same ({dataY[0]}), should create leaf")
-        # Hint: if np.all(dataY == dataY[0]):
-        #           return dataY[0]
+        # Base case 3 - Check if all Y values are the same
+        if np.all(dataY == dataY[0]):
+            if self.verbose:
+                print(f"{'  ' * depth}All Y values same ({dataY[0]}), creating leaf")
+            return dataY[0]
 
         # Find best feature to split on
         best_feature, split_val = self.select_best_feature(dataX, dataY)
 
-        # TODO: Split the data based on best_feature and split_val
-        if self.verbose:
-            print(f"{'  ' * depth}TODO: Split data on feature {best_feature} at value {split_val:.4f}")
-        # Hint: left_idx = dataX[:, best_feature] <= split_val
-        # Hint: right_idx = dataX[:, best_feature] > split_val
-        left_idx = np.ones(len(dataY), dtype=bool)  # Placeholder
-        right_idx = np.zeros(len(dataY), dtype=bool)  # Placeholder
+        # Split the data based on best_feature and split_val
+        left_idx = dataX[:, best_feature] <= split_val
+        right_idx = dataX[:, best_feature] > split_val
 
-        # TODO: Check if split actually separates the data
-        if self.verbose:
-            print(f"{'  ' * depth}TODO: Check if split separates data (left={left_idx.sum()}, right={right_idx.sum()})")
-        # Hint: if left_idx.sum() == 0 or right_idx.sum() == 0:
-        #           return np.mean(dataY)
+        # Check if split actually separates the data
+        if left_idx.sum() == 0 or right_idx.sum() == 0:
+            if self.verbose:
+                print(f"{'  ' * depth}Split doesn't separate data, creating leaf")
+            return np.mean(dataY)
 
         if self.verbose:
             print(f"{'  ' * depth}Splitting on feature {best_feature}, " +
                   f"left={left_idx.sum()}, right={right_idx.sum()}")
-            print(f"{'  ' * depth}TODO: Recursively build left and right subtrees")
 
-        # TODO: Recursively build left and right subtrees
-        # Hint: left_tree = self.build_tree(dataX[left_idx], dataY[left_idx], depth + 1)
-        # Hint: right_tree = self.build_tree(dataX[right_idx], dataY[right_idx], depth + 1)
-        left_tree = np.mean(dataY)  # Placeholder
-        right_tree = np.mean(dataY)  # Placeholder
+        # Recursively build left and right subtrees
+        left_tree = self.build_tree(dataX[left_idx], dataY[left_idx], depth + 1)
+        right_tree = self.build_tree(dataX[right_idx], dataY[right_idx], depth + 1)
 
         # Return node as a list: [best_feature, split_val, left_tree, right_tree]
         return [best_feature, split_val, left_tree, right_tree]
@@ -561,33 +618,21 @@ class DTLearner:
         Returns:
             Predicted value
         """
-        # TODO: If tree is a leaf (not a list, just a number), return it
-        if self.verbose and not isinstance(tree, list):
-            print(f"    TODO: Reached leaf node, should return value")
-        # Hint: if not isinstance(tree, list):
-        #           return tree
+        # If tree is a leaf (not a list, just a number), return it
+        if not isinstance(tree, list):
+            return tree
 
-        # TODO: Extract node components
-        if self.verbose and isinstance(tree, list):
-            print(f"    TODO: Extract feature, split_val, left_tree, right_tree from tree")
-        # Hint: feature = tree[0]
-        # Hint: split_val = tree[1]
-        # Hint: left_tree = tree[2]
-        # Hint: right_tree = tree[3]
-        feature = 0  # Placeholder
-        split_val = 0.0  # Placeholder
-        left_tree = None  # Placeholder
-        right_tree = None  # Placeholder
+        # Extract node components
+        feature = int(tree[0])
+        split_val = tree[1]
+        left_tree = tree[2]
+        right_tree = tree[3]
 
-        # TODO: Traverse left or right based on feature value
-        if self.verbose:
-            print(f"    TODO: Compare point[{feature}] with split_val {split_val:.4f} to decide direction")
-        # Hint: if point[feature] <= split_val:
-        #           return self.query_point(point, left_tree)
-        # Hint: else:
-        #           return self.query_point(point, right_tree)
-
-        return 0.0  # Placeholder
+        # Traverse left or right based on feature value
+        if point[feature] <= split_val:
+            return self.query_point(point, left_tree)
+        else:
+            return self.query_point(point, right_tree)
 
     def query(self, points):
         """
@@ -603,11 +648,10 @@ class DTLearner:
         if isinstance(points, pd.DataFrame):
             points = points.values
 
-        # TODO: Make prediction for each point
+        # Make prediction for each point
         if self.verbose:
-            print(f"\nTODO: Query {len(points)} points through the tree")
-            print("Hint: Use list comprehension with query_point()")
-        # Hint: predictions = np.array([self.query_point(point, self.tree) for point in points])
-        predictions = np.zeros(len(points))  # Placeholder
+            print(f"\nQuerying {len(points)} points through the tree")
+        
+        predictions = np.array([self.query_point(point, self.tree) for point in points])
 
         return predictions
